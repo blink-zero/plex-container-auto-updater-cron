@@ -1,89 +1,51 @@
+# 📦 Plex Docker Auto-Updater (with Discord Notifications)
 
-# 📦 Plex Auto-Updater with Discord Notifications  
-
-A lightweight shell script that automatically checks for updates to your [Plex Media Server](https://www.plex.tv/) Docker container, restarts it only when needed, and sends notifications to a Discord channel.  
-
----
-
-## 🔧 Features  
-
-- Automatic update checks via cron  
-- Smart detection (compares Docker image IDs before restarting)  
-- No downtime unless necessary  
-- Discord notifications for updates *and* no-update events  
-- Includes hostname + timestamp in all messages  
-- Uses `.env` file for secrets (keeps webhook safe)  
-- Logs to syslog and optional file log  
+A small Bash script that checks for updates to your Plex Docker container, restarts it **only when the image actually changed**, and posts a status message to a Discord channel. It also logs to syslog.
 
 ---
 
-## 📸 Example Notifications  
+## ✨ Features
 
-**When Plex is updated:**  
-```
-✅ [media-server] Plex was updated and restarted.
-📦 Version: 1.40.2.8395-c67dce28e
-🕒 Checked at: 2025-08-17 03:00:00
-```
-
-**When no update is found:**  
-```
-ℹ️ [media-server] No Plex update available. Container was not restarted.
-🕒 Checked at: 2025-08-17 03:00:00
-```
+- **Smart update detection** using Docker image IDs (no unnecessary restarts)
+- **Conditional restart** of the Plex container when an update is pulled
+- **Version reporting**: reads the installed Plex version from inside the container
+- **Discord notifications** (plain text) for both update and no-update cases
+- **Timestamp + hostname** included in messages
+- **`.env` support** for secrets and service name
+- **Logs to syslog** (and optional file via cron redirection)
 
 ---
 
-## 📂 File Structure  
+## 📂 File Layout
 
 ```
 /opt/stacks/plex/
 ├── docker-compose.yml
-├── update_plex.sh       # Main script
-├── .env                 # Secrets (Discord webhook, container name)
-└── logs/
-    └── plex_update.log  # Optional cron log
+├── update_plex.sh         # This script
+└── .env                   # Secrets/config (WEBHOOK_URL, SERVICE_NAME)
 ```
 
 ---
 
-## ⚙️ Requirements  
+## 🧩 Requirements
 
-- [Docker](https://docs.docker.com/) + Docker Compose  
-- Bash  
-- Plex installed via `plexinc/pms-docker`  
-- Cron (for scheduled runs)  
-- A Discord Webhook  
-
----
-
-## 🚀 Setup  
-
-### 1. Save the Script  
-Copy `update_plex.sh` into your Plex stack directory:  
-
-```bash
-/opt/stacks/plex/update_plex.sh
-```
-
-Make it executable:  
-
-```bash
-chmod +x /opt/stacks/plex/update_plex.sh
-```
+- Docker + **Docker Compose v2** (`docker compose …`)
+- Bash, `curl`, and `logger`
+- A Discord Webhook URL
+- Plex container based on a Debian/Ubuntu image (for `dpkg-query`), e.g. `plexinc/pms-docker`
 
 ---
 
-### 2. Create the `.env` File  
+## ⚙️ Configuration
 
-Inside `/opt/stacks/plex/.env`:  
+Create `/opt/stacks/plex/.env`:
 
-```bash
+```env
 WEBHOOK_URL=https://discord.com/api/webhooks/your_webhook_here
 SERVICE_NAME=plex
 ```
 
-Lock it down:  
+Recommended permissions:
 
 ```bash
 chmod 600 /opt/stacks/plex/.env
@@ -91,33 +53,88 @@ chmod 600 /opt/stacks/plex/.env
 
 ---
 
-### 3. Add Cron Job  
+## 🚀 Install
 
-Edit your crontab:  
+1. Place the script at:
+
+   ```
+   /opt/stacks/plex/update_plex.sh
+   ```
+
+2. Make it executable:
+
+   ```bash
+   chmod +x /opt/stacks/plex/update_plex.sh
+   ```
+
+3. (Optional) Test run:
+
+   ```bash
+   /opt/stacks/plex/update_plex.sh
+   ```
+
+---
+
+## ⏲️ Schedule with Cron
+
+Run every Sunday at 3:00 AM and append output to a log file:
 
 ```bash
 crontab -e
 ```
 
-Add a weekly run (every Sunday, 3AM):  
+Add:
 
-```bash
+```cron
 0 3 * * SUN /opt/stacks/plex/update_plex.sh >> /var/log/plex_update.log 2>&1
 ```
 
 ---
 
-## 🔍 How It Works  
+## 🔍 How It Works (Step-by-Step)
 
-1. Gets the container’s current image ID.  
-2. Pulls the latest Plex image.  
-3. Compares new image ID to old one.  
-4. If different → restarts Plex + fetches version from inside container.  
-5. Sends status to Discord + logs to syslog.  
-6. If unchanged → logs “No update available.”  
+1. Reads config from `.env` (`WEBHOOK_URL`, `SERVICE_NAME`).
+2. Captures the **current image ID** for the container.
+3. Pulls the **latest image** for the service (`docker compose pull SERVICE_NAME`).
+4. Captures the **new image ID** (from the running container ID).
+5. If image IDs differ:
+   - Brings the service down and back up (`docker compose down/up -d SERVICE_NAME`).
+   - Waits briefly, then reads the **new installed Plex version** from inside the container using:
+     ```
+     dpkg-query -W -f='${Version}' plexmediaserver
+     ```
+   - Sends a Discord message: **From: old → new**.
+6. If image IDs are the same:
+   - Reads the **current installed version** and sends a “No update” Discord message.
+7. Logs the same message to **syslog**.
 
-## 💬 Contributing  
+If version retrieval fails (container not running or `dpkg-query` missing), the script reports:
+```
+Unknown (could not retrieve)
+```
 
-PRs, issues, and suggestions are welcome!  
-Feel free to fork and adapt for your own setup.  
-```  
+---
+
+## 🖼️ Example Discord Messages
+
+**When updated:**
+```
+✅ [my-host] Plex was updated and restarted.
+📦 From: 1.40.2.8395-c67dce28e → 1.40.3.8555-abcdef123
+🕒 Checked at: 2025-08-19 03:00:00
+```
+
+**When no update available:**
+```
+ℹ️ [my-host] No Plex update available.
+📦 Current Version: 1.40.3.8555-abcdef123
+🕒 Checked at: 2025-08-19 03:00:00
+```
+
+---
+
+## 🔎 Troubleshooting
+
+- **Version shows “Unknown”:** Ensure the container is running and based on Debian/Ubuntu (so `dpkg-query` exists). For other bases, adjust the version command.
+- **No restart after updates:** Confirm `SERVICE_NAME` in `.env` matches the Compose service/container name.
+- **Compose v1 vs v2:** The script uses `docker compose …` (v2). If you only have v1 (`docker-compose`), update your Docker or adapt the commands.
